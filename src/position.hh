@@ -10,7 +10,7 @@
 
 namespace ccls {
 struct Pos {
-  uint16_t line = 0;
+  int32_t line = 0;
   int16_t column = -1;
 
   static Pos fromString(const std::string &encoded);
@@ -73,7 +73,7 @@ template <> struct hash<ccls::Range> {
       ccls::Range range;
       uint64_t u64;
     } u{x};
-    static_assert(sizeof(ccls::Range) == 8);
+    static_assert(sizeof(ccls::Range) == 16);
     return hash<uint64_t>()(u.u64);
   }
 };

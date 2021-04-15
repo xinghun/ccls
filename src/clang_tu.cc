@@ -59,7 +59,7 @@ static Pos decomposed2LineAndCol(const SourceManager &sm,
         while (i < p.size() && (uint8_t)p[i] >= 128 && (uint8_t)p[i] < 192)
           i++;
   }
-  return {(uint16_t)std::min<int>(l, UINT16_MAX),
+  return {(int32_t)std::min<int>(l, INT32_MAX),
           (int16_t)std::min<int>(c, INT16_MAX)};
 }
 
