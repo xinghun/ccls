@@ -591,6 +591,13 @@ Project::Entry Project::findEntry(const std::string &path, bool can_redirect,
   return ret;
 }
 
+void Project::fullLoadCache() {
+  std::lock_guard lock(mtx);
+  for (auto &[root, folder] : root2folder)
+    for (const Project::Entry &entry : folder.entries)
+      pipeline::loadCache(entry.filename);
+}
+
 void Project::index(WorkingFiles *wfiles, const RequestId &id) {
   auto &gi = g_config->index;
   GroupMatch match(gi.whitelist, gi.blacklist),

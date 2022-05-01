@@ -269,8 +269,8 @@ void *indexer(void *arg_) {
 }
 } // namespace
 
-void do_initialize(MessageHandler *m, InitializeParam &param,
-                   ReplyOnce &reply) {
+void do_initialize(MessageHandler *m, InitializeParam &param, ReplyOnce &reply,
+                   bool standalone = false) {
   std::string project_path = normalizePath(param.rootUri->getPath());
   LOG_S(INFO) << "initialize in directory " << project_path << " with uri "
               << param.rootUri->raw_uri;
@@ -392,6 +392,11 @@ void do_initialize(MessageHandler *m, InitializeParam &param,
   // files, because that takes a long time.
   m->include_complete->rescan();
 
+  if (!standalone && g_config->cache.fullLoadOnInitialize) {
+    LOG_S(INFO) << "full load cache before dispatch initial index requests";
+    m->project->fullLoadCache();
+  }
+
   LOG_S(INFO) << "dispatch initial index requests";
   m->project->index(m->wfiles, reply.id);
 
@@ -423,7 +428,7 @@ void standaloneInitialize(MessageHandler &handler, const std::string &root) {
   InitializeParam param;
   param.rootUri = DocumentUri::fromPath(root);
   ReplyOnce reply{handler};
-  do_initialize(&handler, param, reply);
+  do_initialize(&handler, param, reply, true);
 }
 
 void MessageHandler::initialized(EmptyParam &) {

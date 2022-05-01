@@ -45,6 +45,13 @@ struct WorkDoneProgressCreateParam {
   const char *token = index_progress_token;
 };
 REFLECT_STRUCT(WorkDoneProgressCreateParam, token);
+
+constexpr char load_cache_progress_token[] = "load cache";
+struct LoadCacheWorkDoneProgressCreateParam {
+  const char *token = load_cache_progress_token;
+};
+REFLECT_STRUCT(LoadCacheWorkDoneProgressCreateParam, token);
+
 } // namespace
 
 void VFS::clear() {
@@ -76,6 +83,7 @@ namespace pipeline {
 std::atomic<bool> g_quit;
 std::atomic<int64_t> loaded_ts{0}, request_id{0};
 IndexStats stats;
+LoadCacheStats load_cache_stats;
 int64_t tick = 0;
 
 namespace {
@@ -87,6 +95,7 @@ struct IndexRequest {
   bool must_exist = false;
   RequestId id;
   int64_t ts = tick++;
+  bool load_cache_only = false;
 };
 
 std::mutex thread_mtx;
@@ -196,12 +205,82 @@ std::mutex &getFileMutex(const std::string &path) {
   return mutexes[std::hash<std::string>()(path) % n_MUTEXES];
 }
 
+bool indexer_LoadCache(Project *project, VFS *vfs, const GroupMatch &matcher,
+                       IndexRequest &request) {
+  struct RAII {
+    ~RAII() { load_cache_stats.completed++; }
+  } raii;
+
+  if (!matcher.matches(request.path)) {
+    return false;
+  }
+
+  Project::Entry entry =
+      project->findEntry(request.path, true, request.must_exist);
+  if (request.must_exist && entry.filename.empty())
+    return true;
+  std::string path_to_index = entry.filename;
+  std::unique_ptr<IndexFile> prev;
+
+  std::unique_lock lock(getFileMutex(path_to_index));
+  prev = rawCacheLoad(path_to_index);
+  if (!prev) {
+    return false;
+  }
+
+  if (vfs->loaded(path_to_index))
+    return true;
+  LOG_S(INFO) << "full load cache for " << path_to_index;
+  auto dependencies = prev->dependencies;
+  IndexUpdate update = IndexUpdate::createDelta(nullptr, prev.get());
+  on_indexed->pushBack(std::move(update), false);
+  {
+    std::lock_guard lock1(vfs->mutex);
+    VFS::State &st = vfs->state[path_to_index];
+    st.loaded++;
+    if (prev->no_linkage)
+      st.step = 2;
+  }
+  lock.unlock();
+
+  for (const auto &dep : dependencies) {
+    std::string path = dep.first.val().str();
+    if (!vfs->stamp(path, dep.second, 1))
+      continue;
+    std::lock_guard lock1(getFileMutex(path));
+    prev = rawCacheLoad(path);
+    if (!prev)
+      continue;
+    {
+      std::lock_guard lock2(vfs->mutex);
+      VFS::State &st = vfs->state[path];
+      if (st.loaded)
+        continue;
+      st.loaded++;
+      st.timestamp = prev->mtime;
+      if (prev->no_linkage)
+        st.step = 3;
+    }
+    IndexUpdate update = IndexUpdate::createDelta(nullptr, prev.get());
+    on_indexed->pushBack(std::move(update), false);
+    if (entry.id >= 0) {
+      std::lock_guard lock2(project->mtx);
+      project->root2folder[entry.root].path2entry_index[path] = entry.id;
+    }
+  }
+  return true;
+}
+
 bool indexer_Parse(SemaManager *completion, WorkingFiles *wfiles,
                    Project *project, VFS *vfs, const GroupMatch &matcher) {
   std::optional<IndexRequest> opt_request = index_request->tryPopFront();
   if (!opt_request)
     return false;
   auto &request = *opt_request;
+  if (request.load_cache_only) {
+    return indexer_LoadCache(project, vfs, matcher, request);
+  }
+
   bool loud = request.mode != IndexMode::OnChange;
 
   // Dummy one to trigger refresh semantic highlight.
@@ -651,6 +730,8 @@ void mainLoop() {
   handler.manager = &manager;
   handler.include_complete = &include_complete;
 
+  bool load_cache_work_done_created = false, load_cache_in_progress = false;
+  int64_t load_cache_last_completed = 0;
   bool work_done_created = false, in_progress = false;
   bool has_indexed = false;
   int64_t last_completed = 0;
@@ -701,6 +782,45 @@ void mainLoop() {
           path2backlog.erase(it);
         }
       }
+    }
+
+    int64_t load_cache_completed =
+        load_cache_stats.completed.load(std::memory_order_relaxed);
+    if (load_cache_completed != load_cache_last_completed) {
+      if (!load_cache_work_done_created) {
+        LoadCacheWorkDoneProgressCreateParam param;
+        request("window/workDoneProgress/create", param);
+        load_cache_work_done_created = true;
+      }
+
+      int64_t load_cache_enqueued =
+          load_cache_stats.enqueued.load(std::memory_order_relaxed);
+      if (load_cache_completed != load_cache_enqueued) {
+        if (!load_cache_in_progress) {
+          WorkDoneProgressParam param;
+          param.token = load_cache_progress_token;
+          param.value.kind = "begin";
+          param.value.title = "loading cache";
+          notify("$/progress", param);
+          load_cache_in_progress = true;
+        }
+        WorkDoneProgressParam param;
+        param.token = load_cache_progress_token;
+        param.value.kind = "report";
+        param.value.message =
+            (Twine(load_cache_completed) + "/" + Twine(load_cache_enqueued))
+                .str();
+        param.value.percentage =
+            100 * (load_cache_completed) / (load_cache_enqueued);
+        notify("$/progress", param);
+      } else if (load_cache_in_progress) {
+        WorkDoneProgressParam param;
+        param.token = load_cache_progress_token;
+        param.value.kind = "end";
+        notify("$/progress", param);
+        load_cache_in_progress = false;
+      }
+      load_cache_last_completed = load_cache_completed;
     }
 
     int64_t completed = stats.completed.load(std::memory_order_relaxed);
@@ -809,6 +929,13 @@ void index(const std::string &path, const std::vector<const char *> &args,
     stats.enqueued++;
   index_request->pushBack({path, args, mode, must_exist, std::move(id)},
                           mode != IndexMode::Background);
+}
+
+void loadCache(const std::string &path) {
+  if (!path.empty())
+    load_cache_stats.enqueued++;
+  index_request->pushBack({path, {}, IndexMode::Background, false, {}, 0, true},
+                          true);
 }
 
 void removeCache(const std::string &path) {

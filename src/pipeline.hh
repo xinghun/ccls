@@ -43,10 +43,15 @@ struct IndexStats {
   std::atomic<int64_t> last_idle, completed, enqueued;
 };
 
+struct LoadCacheStats {
+  std::atomic<int64_t> completed, enqueued;
+};
+
 namespace pipeline {
 extern std::atomic<bool> g_quit;
 extern std::atomic<int64_t> loaded_ts;
 extern IndexStats stats;
+extern LoadCacheStats load_cache_stats;
 extern int64_t tick;
 
 void threadEnter();
@@ -61,6 +66,7 @@ void standalone(const std::string &root);
 
 void index(const std::string &path, const std::vector<const char *> &args,
            IndexMode mode, bool must_exist, RequestId id = {});
+void loadCache(const std::string &path);
 void removeCache(const std::string &path);
 std::optional<std::string> loadIndexedContent(const std::string &path);
 

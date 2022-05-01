@@ -66,5 +66,6 @@ struct Project {
 
   void index(WorkingFiles *wfiles, const RequestId &id);
   void indexRelated(const std::string &path);
+  void fullLoadCache();
 };
 } // namespace ccls

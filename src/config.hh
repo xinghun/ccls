@@ -62,6 +62,15 @@ struct Config {
     // 0: never retain; 1: retain after initial load; 2: retain after 2 loads
     // (initial load+first save)
     int retainInMemory = 2;
+
+    // When handling an initialize request from the client, full load the cache
+    // before starting the index process. Note: The expired caches are also
+    // loaded. So it may be inaccurate until the index process is actually
+    // complete.
+    // The main purpose of turning this option on is to start working quickly
+    // with a less accurate (but mostly accurate) cache without waiting for the
+    // slow index process.
+    bool fullLoadOnInitialize = false;
   } cache;
 
   struct ServerCap {
@@ -322,7 +331,7 @@ struct Config {
   } xref;
 };
 REFLECT_STRUCT(Config::Cache, directory, format, hierarchicalPath,
-               retainInMemory);
+               retainInMemory, fullLoadOnInitialize);
 REFLECT_STRUCT(Config::ServerCap::DocumentOnTypeFormattingOptions,
                firstTriggerCharacter, moreTriggerCharacter);
 REFLECT_STRUCT(Config::ServerCap::Workspace::WorkspaceFolders, supported,
