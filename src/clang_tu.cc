@@ -121,6 +121,10 @@ buildCompilerInvocation(const std::string &main, std::vector<const char *> args,
   driver::Driver d(args[0], llvm::sys::getDefaultTargetTriple(), *diags, "ccls", vfs);
 #endif
   d.setCheckInputsExist(false);
+#if LLVM_VERSION_MAJOR >= 15
+  // For -include b.hh, don't probe b.hh.{gch,pch} and change to -include-pch.
+  d.setProbePrecompiled(false);
+#endif
   std::unique_ptr<driver::Compilation> comp(d.BuildCompilation(args));
   if (!comp)
     return nullptr;
@@ -175,6 +179,8 @@ buildCompilerInvocation(const std::string &main, std::vector<const char *> args,
   ci->getPreprocessorOpts().ImplicitPCHInclude.clear();
   ci->getPreprocessorOpts().PrecompiledPreambleBytes = {0, false};
   ci->getPreprocessorOpts().PCHThroughHeader.clear();
+
+  ci->getHeaderSearchOpts().ModuleFormat = "raw";
   return ci;
 }
 

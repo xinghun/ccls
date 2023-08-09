@@ -179,7 +179,9 @@ public:
   void InclusionDirective(SourceLocation hashLoc, const Token &includeTok,
                           StringRef fileName, bool isAngled,
                           CharSourceRange filenameRange,
-#if LLVM_VERSION_MAJOR >= 15 // llvmorg-15-init-7692-gd79ad2f1dbc2
+#if LLVM_VERSION_MAJOR >= 16 // llvmorg-16-init-15080-g854c10f8d185
+                          OptionalFileEntryRef fileRef,
+#elif LLVM_VERSION_MAJOR >= 15 // llvmorg-15-init-7692-gd79ad2f1dbc2
                           llvm::Optional<FileEntryRef> fileRef,
 #else
                           const FileEntry *file,
@@ -402,7 +404,11 @@ void buildPreamble(Session &session, CompilerInvocation &ci,
 
   CclsPreambleCallbacks pc;
   if (auto newPreamble = PrecompiledPreamble::Build(
-          ci, buf.get(), bounds, *de, fs, session.pch, true, pc)) {
+          ci, buf.get(), bounds, *de, fs, session.pch, true,
+#if LLVM_VERSION_MAJOR >= 17 // llvmorg-17-init-4072-gcc929590ad30
+          "",
+#endif
+          pc)) {
     assert(!ci.getPreprocessorOpts().RetainRemappedFileBuffers);
     if (oldP) {
       auto &old_includes = oldP->includes;
